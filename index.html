@@ -265,7 +265,8 @@ function migrate(){
   }
 }
 function refileByDate(){let changed=false;for(const t of tasks){if(t.done)continue;const g=t.due?groupForDate(t.due):"later";if(g!==t.group){t.group=g;changed=true;}}if(changed)save();}
-function save(){localStorage.setItem(STORAGE_KEY,JSON.stringify(tasks));localStorage.setItem(SECTION_KEY,JSON.stringify(sectionState));localStorage.setItem(CAT_KEY,JSON.stringify(categories));if(window.fernSync)window.fernSync.changed();}
+let _bootstrapping=true;
+function save(){localStorage.setItem(STORAGE_KEY,JSON.stringify(tasks));localStorage.setItem(SECTION_KEY,JSON.stringify(sectionState));localStorage.setItem(CAT_KEY,JSON.stringify(categories));if(!_bootstrapping&&window.fernSync)window.fernSync.changed();}
 function applyBackground(choice){const key=backgrounds[choice]?choice:"evergreenForest";document.body.style.setProperty("--bg-url",`url("${backgrounds[key]}")`);bgSelect.value=key;localStorage.setItem(BG_KEY,key);}
 
 /* ---- categories ---- */
@@ -610,6 +611,7 @@ dueInput.value=localISO(todayObj());
 renderCategoryUI();
 save();
 render();
+_bootstrapping=false;
 </script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
