@@ -5,6 +5,7 @@
   const overlay = $("fsOverlay"), dot = $("syncDot");
   const DIRTY_KEY = "fern_sync_dirty_at";
   const SKIP_KEY = "fern_sync_skip";
+  const NOTES_ONLY = !!(window.fernNotes && window.fernNotes.NOTES_ONLY);   // pop-out notes window: sync notes only
 
   let status = "local", statusText = "Not syncing - this device only.";
   function setStatus(s, text) {
@@ -30,7 +31,7 @@
   const configured = !!(cfg && cfg.apiKey && !/PASTE/i.test(cfg.apiKey));
 
   if (!configured || !window.firebase) {
-    window.fernSync = { changed() {} };
+    window.fernSync = { changed() {}, notesChanged() {}, flushNotes() {} };
     setStatus("local", !configured
       ? "Sync not set up yet (firebase-config.js)."
       : "Couldn't load sync - working on this device only.");
@@ -55,17 +56,43 @@
     if (data === lastSynced) { setDirty(0); setStatus("ok", "Synced."); return; }
     const stamp = dirtyAt || Date.now();
     setStatus("busy", navigator.onLine ? "Saving..." : "Offline - will sync when you reconnect.");
-    docRef.set({ data, editedAt: stamp, savedAt: firebase.firestore.FieldValue.serverTimestamp() })
+    docRef.set({ data, editedAt: stamp, savedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true })
       .then(() => { lastSynced = data; if (dirtyAt === stamp) setDirty(0); setStatus("ok", "Synced."); })
       .catch((e) => setStatus("err", "Sync error: " + (e && e.message ? e.message : e)));
   }
 
+  // ---- notes: stored in the same document (field "notesData"), merged note-by-note, newest edit wins ----
+  let lastNotesSynced = null, notesTimer = null;
+  function pushNotes() {
+    clearTimeout(notesTimer); notesTimer = null;
+    if (!docRef || !window.fernNotes) return;
+    const data = window.fernNotes.serialize();
+    if (data === lastNotesSynced) return;
+    setStatus("busy", navigator.onLine ? "Saving..." : "Offline - will sync when you reconnect.");
+    docRef.set({ notesData: data, notesAt: Date.now() }, { merge: true })
+      .then(() => { lastNotesSynced = data; setStatus("ok", "Synced."); })
+      .catch((e) => setStatus("err", "Sync error: " + (e && e.message ? e.message : e)));
+  }
+  function syncNotes(d) {
+    if (!window.fernNotes) return;
+    if (typeof d.notesData === "string") {
+      if (d.notesData === lastNotesSynced) return;
+      const cloudMissingSomething = window.fernNotes.mergeRemote(d.notesData);
+      lastNotesSynced = d.notesData;
+      if (cloudMissingSomething) { clearTimeout(notesTimer); notesTimer = setTimeout(pushNotes, 400); }
+    } else if (window.fernNotes.serialize() !== "[]") {
+      lastNotesSynced = null; pushNotes();                                                          // cloud has no notes yet: upload ours
+    }
+  }
+
   window.fernSync = {
     changed() {
-      if (applyingRemote) return;
+      if (applyingRemote || NOTES_ONLY) return;
       setDirty(Date.now());
       clearTimeout(pushTimer); pushTimer = setTimeout(push, 700);
-    }
+    },
+    notesChanged() { clearTimeout(notesTimer); notesTimer = setTimeout(pushNotes, 1200); },
+    flushNotes() { if (notesTimer) pushNotes(); }
   };
 
   function applyRemote(obj, raw) {
@@ -84,9 +111,15 @@
     if (unsub) unsub();
     unsub = docRef.onSnapshot({ includeMetadataChanges: false }, (snap) => {
       if (snap.metadata.hasPendingWrites) return;
-      if (!snap.exists) { setDirty(dirtyAt || Date.now()); push(); return; }   // first device: upload what's here
+      if (!snap.exists) {                                                    // first device: upload what's here
+        if (!NOTES_ONLY) { setDirty(dirtyAt || Date.now()); push(); }
+        pushNotes(); return;
+      }
       const d = snap.data() || {};
-      if (typeof d.data !== "string" || d.data === lastSynced) { setStatus("ok", "Synced."); return; }
+      syncNotes(d);
+      if (NOTES_ONLY) { setStatus("ok", "Synced."); return; }
+      if (typeof d.data !== "string") { setDirty(dirtyAt || Date.now()); push(); return; }   // doc has notes but no tasks yet
+      if (d.data === lastSynced) { setStatus("ok", "Synced."); return; }
       if (dirtyAt && dirtyAt > (d.editedAt || 0)) { push(); return; }        // local edits are newer
       let obj; try { obj = JSON.parse(d.data); } catch (e) { return; }
       applyRemote(obj, d.data);
@@ -135,5 +168,5 @@
     if (auth.currentUser) { $("fsState").textContent = statusText; showOverlay("account"); }
     else { sessionStorage.removeItem(SKIP_KEY); showOverlay("signin"); }
   });
-  window.addEventListener("online", () => { if (dirtyAt) push(); });
+  window.addEventListener("online", () => { if (dirtyAt && !NOTES_ONLY) push(); pushNotes(); });
 })();

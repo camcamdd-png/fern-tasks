@@ -1,5 +1,5 @@
 /* Fern Tasks service worker: works offline, picks up updates automatically */
-const CACHE = "fern-tasks-v1";
+const CACHE = "fern-tasks-v2";
 const SHELL = ["./", "index.html", "sync.js", "firebase-config.js", "manifest.json",
                "icon-192.png", "icon-512.png", "apple-touch-icon.png", "favicon.ico"];
 self.addEventListener("install", (e) => {
